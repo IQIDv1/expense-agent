@@ -86,6 +86,8 @@ export default function DraftPage({ params }: { params: Promise<{ id: string }> 
     });
   }, []);
 
+  const draftStatus = draft?.status ?? null;
+
   const saveDraft = useCallback(
     async ({
       silent = false,
@@ -125,7 +127,7 @@ export default function DraftPage({ params }: { params: Promise<{ id: string }> 
             businessCategory,
             aiConfidence,
             aiAllocations,
-            status: statusOverride ?? draft?.status ?? 'needs-info',
+            status: statusOverride ?? draftStatus ?? 'needs-info',
           }),
         });
         if (!res.ok) {
@@ -191,7 +193,21 @@ export default function DraftPage({ params }: { params: Promise<{ id: string }> 
         return false;
       }
     },
-    [aiNotes, calculateLineTotal, draftId, form, normalizeLineItems, selectedEmployee, selectedTeam, selectedTrip],
+    [
+      aiAllocations,
+      aiConfidence,
+      aiNotes,
+      businessCategory,
+      calculateLineTotal,
+      draftId,
+      draftStatus,
+      form,
+      glAccount,
+      normalizeLineItems,
+      selectedEmployee,
+      selectedTeam,
+      selectedTrip,
+    ],
   );
 
   const handleSubmit = useCallback(async () => {

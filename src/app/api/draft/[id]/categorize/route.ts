@@ -7,10 +7,14 @@ import type { AISplitAllocation } from '@/types/domain';
 
 export const runtime = 'nodejs';
 
-export async function POST(
-  _req: NextRequest,
-  context: { params: Promise<{ id: string }> },
-) {
+type ParamsContext = { params: { id: string } } | { params: Promise<{ id: string }> };
+
+function isPromise<T>(value: unknown): value is Promise<T> {
+  return typeof value === 'object' && value !== null && 'then' in (value as Record<string, unknown>);
+}
+
+export async function POST(_req: NextRequest, { params }: ParamsContext) {
+  void _req;
   const requestId = randomUUID();
   const startedAt = Date.now();
 
@@ -26,7 +30,8 @@ export async function POST(
       );
     }
 
-    const { id } = await context.params;
+    const resolvedParams = isPromise<{ id: string }>(params) ? await params : params;
+    const { id } = resolvedParams;
     const [draftResult, employeesResult, teamsResult, tripsResult] = await Promise.all([
       supa
         .from('expense_drafts')
@@ -167,14 +172,22 @@ Return JSON ONLY with those keys.`;
     let content: unknown = data.choices?.[0]?.message?.content ?? '{}';
 
     if (Array.isArray(content)) {
-      content = content.map((part: any) => part?.text ?? '').join('\n');
+      content = content
+        .map((part) => {
+          if (typeof part === 'string') return part;
+          if (part && typeof part === 'object' && 'text' in part) {
+            const textValue = (part as { text?: unknown }).text;
+            return typeof textValue === 'string' ? textValue : '';
+          }
+          return '';
+        })
+        .join('\n');
     }
 
-    if (typeof content !== 'string') {
-      content = JSON.stringify(content);
-    }
+    const normalizedContent =
+      typeof content === 'string' ? content : JSON.stringify(content);
 
-    const jsonString = content.match(/\{[\s\S]*\}/)?.[0]?.trim() ?? '{}';
+    const jsonString = normalizedContent.match(/\{[\s\S]*\}/)?.[0]?.trim() ?? '{}';
     const parsed = JSON.parse(jsonString);
 
     const aiCategory = typeof parsed.category === 'string' ? parsed.category : null;
@@ -189,29 +202,40 @@ Return JSON ONLY with those keys.`;
         : null;
     const aiNotesRaw = Array.isArray(parsed.notes) ? parsed.notes : [];
     const aiNotes = aiNotesRaw
-      .map((note) => (typeof note === 'string' ? note.trim() : ''))
+      .map((note: unknown) => (typeof note === 'string' ? note.trim() : ''))
       .filter(Boolean);
 
     const aiSplitsRaw = Array.isArray(parsed.splitAllocations) ? parsed.splitAllocations : [];
     const aiSplits = aiSplitsRaw
-      .map((item: any) => {
+      .map((item: unknown) => {
         if (!item || typeof item !== 'object') return null;
-        if (typeof item.glAccount !== 'string' || !item.glAccount.trim()) return null;
-        const allocation = {
-          glAccount: item.glAccount.trim(),
-          amount:
-            typeof item.amount === 'number' && Number.isFinite(item.amount)
-              ? Number(item.amount)
-              : undefined,
-          percent:
-            typeof item.percent === 'number' && Number.isFinite(item.percent)
-              ? Number(item.percent)
-              : undefined,
-          notes: typeof item.notes === 'string' ? item.notes.trim() : undefined,
+        const glAccountValue = (item as { glAccount?: unknown }).glAccount;
+        if (typeof glAccountValue !== 'string' || glAccountValue.trim().length === 0) {
+          return null;
+        }
+
+        const allocation: AISplitAllocation = {
+          glAccount: glAccountValue.trim(),
         };
+
+        const amountValue = (item as { amount?: unknown }).amount;
+        if (typeof amountValue === 'number' && Number.isFinite(amountValue)) {
+          allocation.amount = Number(amountValue);
+        }
+
+        const percentValue = (item as { percent?: unknown }).percent;
+        if (typeof percentValue === 'number' && Number.isFinite(percentValue)) {
+          allocation.percent = Number(percentValue);
+        }
+
+        const notesValue = (item as { notes?: unknown }).notes;
+        if (typeof notesValue === 'string' && notesValue.trim().length > 0) {
+          allocation.notes = notesValue.trim();
+        }
+
         return allocation;
       })
-      .filter(Boolean) as AISplitAllocation[];
+      .filter((item: AISplitAllocation | null): item is AISplitAllocation => item !== null);
 
     const updates: Record<string, unknown> = {
       ai_labels: aiNotes.length > 0 ? aiNotes : null,
